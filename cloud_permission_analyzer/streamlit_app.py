@@ -52,7 +52,14 @@ if st.button("Analyze") and question:
     with st.spinner("Analyzing permission graph..."):
         response = answer_question(question)
     st.subheader("Agent Answer")
+    if response.get("used_provider"):
+        st.caption(f"Provider: {response['used_provider']}")
     st.write(response.get("answer", "No answer returned."))
+    if response.get("llm_error"):
+        st.info(
+            "Claude API was unavailable, so the deterministic graph fallback answered this question."
+        )
+        st.code(response["llm_error"])
     if response.get("strands_error"):
         st.info(
             "Strands was unavailable, so the deterministic graph fallback answered this question."

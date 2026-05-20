@@ -25,6 +25,14 @@ python scripts/seed.py
 streamlit run cloud_permission_analyzer/streamlit_app.py
 ```
 
+To use Claude directly instead of AWS Bedrock, set these values in `.env`:
+
+```bash
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=your_claude_api_key
+CLAUDE_MODEL=claude-3-5-sonnet-latest
+```
+
 Open the Streamlit app and ask:
 
 ```text

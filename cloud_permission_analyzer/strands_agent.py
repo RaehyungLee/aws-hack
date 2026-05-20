@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import re
+from os import getenv
 from typing import Any, Callable
+
+from dotenv import load_dotenv
 
 from cloud_permission_analyzer.neo4j_client import Neo4jClient
 from cloud_permission_analyzer.risk_queries import (
@@ -26,6 +29,17 @@ except Exception:
 
     def tool(func: Callable[..., Any]) -> Callable[..., Any]:  # type: ignore[no-redef]
         return func
+
+try:
+    from anthropic import Anthropic  # type: ignore[import-not-found]
+
+    ANTHROPIC_AVAILABLE = True
+except Exception:
+    Anthropic = None  # type: ignore[assignment]
+    ANTHROPIC_AVAILABLE = False
+
+
+load_dotenv()
 
 
 SYSTEM_PROMPT = """
@@ -190,14 +204,83 @@ def _fallback_answer(question: str) -> dict[str, Any]:
     }
 
 
+def answer_with_claude(question: str) -> dict[str, Any]:
+    if not ANTHROPIC_AVAILABLE or Anthropic is None:
+        raise RuntimeError("Anthropic SDK is not installed. Run: pip install anthropic")
+
+    api_key = getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set.")
+
+    graph_result = _fallback_answer(question)
+    client = Anthropic(api_key=api_key)
+    model = getenv("CLAUDE_MODEL", "claude-3-5-sonnet-latest")
+
+    prompt = f"""
+User question:
+{question}
+
+Neo4j graph analysis result:
+{json.dumps(graph_result, indent=2, default=str)}
+
+Explain the result for a security review. Follow this format:
+
+Direct answer:
+Path evidence:
+Risk:
+Recommended fix:
+
+Rules:
+- Only use facts present in the Neo4j graph analysis result.
+- If evidence is empty, say no matching risk path was found.
+- Keep the answer concise and demo-friendly.
+"""
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=800,
+        temperature=0,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    answer = "".join(
+        block.text for block in response.content if getattr(block, "type", None) == "text"
+    )
+
+    return {
+        "answer": answer,
+        "evidence": graph_result.get("evidence", []),
+        "used_provider": "anthropic",
+        "used_strands": False,
+    }
+
+
 def answer_question(question: str) -> dict[str, Any]:
-    if STRANDS_AVAILABLE:
+    provider = getenv("LLM_PROVIDER", "anthropic").lower()
+
+    if provider in {"anthropic", "claude"}:
+        try:
+            return answer_with_claude(question)
+        except Exception as exc:
+            fallback = _fallback_answer(question)
+            fallback["llm_error"] = str(exc)
+            fallback["used_provider"] = "fallback"
+            return fallback
+
+    if provider == "strands" and STRANDS_AVAILABLE:
         try:
             agent = create_agent()
             result = agent(question)
-            return {"answer": str(result), "evidence": [], "used_strands": True}
+            return {
+                "answer": str(result),
+                "evidence": [],
+                "used_provider": "strands",
+                "used_strands": True,
+            }
         except Exception as exc:
             fallback = _fallback_answer(question)
             fallback["strands_error"] = str(exc)
+            fallback["used_provider"] = "fallback"
             return fallback
+
     return _fallback_answer(question)
