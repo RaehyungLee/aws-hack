@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+streamlit
+neo4j
+pydantic
+python-dotenv
+boto3
+strands-agents
